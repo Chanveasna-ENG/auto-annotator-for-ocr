@@ -1,7 +1,7 @@
 # ui/main_window.py
 import os
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QFileDialog, QLabel, QStatusBar, QMessageBox)
+                             QPushButton, QFileDialog, QLabel, QStatusBar, QMessageBox, QApplication)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         # Logic Engine
         self.engine = OCREngine()
         self.current_image_path = None
-        self.current_mode = "VIEW" # VIEW, MOVE, EDIT
+        self.current_mode = "VIEW" 
 
         self.setup_ui()
         
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         toolbar.addStretch()
 
         # Mode Label
-        self.lbl_mode = QLabel("Mode: VIEW (Press 'M' or 'E')")
+        self.lbl_mode = QLabel("Mode: VIEW (Keys: M, R, T | Create: Ctrl+Drag)")
         self.lbl_mode.setStyleSheet("color: #AAA; font-weight: bold;")
         toolbar.addWidget(self.lbl_mode)
 
@@ -76,8 +76,10 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_M:
             self.set_mode("MOVE")
-        elif event.key() == Qt.Key.Key_E:
-            self.set_mode("EDIT")
+        elif event.key() == Qt.Key.Key_R:
+            self.set_mode("RESIZE") # Renamed from Edit
+        elif event.key() == Qt.Key.Key_T:
+            self.set_mode("TEXT")   # New Text Mode
         elif event.key() == Qt.Key.Key_Delete:
             self.delete_selected()
         else:
@@ -85,7 +87,16 @@ class MainWindow(QMainWindow):
 
     def set_mode(self, mode):
         self.current_mode = mode
-        self.lbl_mode.setText(f"Mode: {mode}")
+        self.canvas.current_mode_ref = mode # Inform canvas
+        
+        # Update UI Label
+        mode_desc = {
+            "MOVE": "MOVE (Drag boxes)",
+            "RESIZE": "RESIZE (Drag corners)",
+            "TEXT": "TEXT (Double-click to edit)",
+            "VIEW": "VIEW (Read only)"
+        }
+        self.lbl_mode.setText(f"Mode: {mode_desc.get(mode, mode)}")
         
         # Update all items in scene
         for item in self.canvas.scene.items():
@@ -120,13 +131,12 @@ class MainWindow(QMainWindow):
             return
         
         self.status.showMessage("Running OCR...")
-        QApplication.processEvents() # Force UI update
+        QApplication.processEvents()
         
         try:
             results = self.engine.run(self.current_image_path)
             
-            # Clear existing boxes (keep image)
-            # A simple way is to reload image, or filter items. Let's filter.
+            # Remove existing boxes
             for item in self.canvas.scene.items():
                 if isinstance(item, BoxItem):
                     self.canvas.scene.removeItem(item)
@@ -145,13 +155,19 @@ class MainWindow(QMainWindow):
             print(e)
 
     def delete_selected(self):
-        for item in self.canvas.scene.selectedItems():
-            self.canvas.scene.removeItem(item)
+        items = self.canvas.scene.selectedItems()
+        if not items: return
+        
+        count = 0
+        for item in items:
+            if isinstance(item, BoxItem):
+                self.canvas.scene.removeItem(item)
+                count += 1
+        self.status.showMessage(f"Deleted {count} boxes.")
 
     def save_data(self):
         if not self.current_image_path: return
         
-        # Collect data from scene
         boxes = []
         for item in self.canvas.scene.items():
             if isinstance(item, BoxItem):
@@ -165,11 +181,9 @@ class MainWindow(QMainWindow):
             self.status.showMessage("No boxes to save.")
             return
 
-        # Prepare paths
         base_name = os.path.basename(self.current_image_path)
         name_no_ext = os.path.splitext(base_name)[0]
         
-        # Ensure directories
         os.makedirs("data/labels", exist_ok=True)
         os.makedirs("xml_labels", exist_ok=True)
         
@@ -178,10 +192,7 @@ class MainWindow(QMainWindow):
         
         img_size = (int(self.canvas.scene.width()), int(self.canvas.scene.height()))
         
-        # Save
         save_to_yolo(boxes, img_size[0], img_size[1], yolo_path)
         save_to_voc_xml(boxes, base_name, img_size, xml_path)
         
         self.status.showMessage(f"Saved to {yolo_path} and {xml_path}")
-
-from PyQt6.QtWidgets import QApplication
